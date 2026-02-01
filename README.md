@@ -51,4 +51,6 @@ npm run tauri build
 
 ## License
 
-MIT
+**Non-Commercial Use Only.**
+Free for personal use. Redistribution for commercial purposes or sale is strictly prohibited.
+See [LICENSE](LICENSE) for details.
