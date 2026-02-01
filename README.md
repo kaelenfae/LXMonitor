@@ -49,6 +49,10 @@ npm run tauri build
 
 - [LXLog](https://lxlog.netlify.app) — Lighting documentation and paperwork tool
 
+## Credits
+
+Created with the help of **Google Antigravity**.
+
 ## License
 
 **Non-Commercial Use Only.**

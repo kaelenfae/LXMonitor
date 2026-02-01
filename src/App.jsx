@@ -423,6 +423,9 @@ function SettingsModal({
               <p className="about-link">
                 Part of the <a href="https://lxlog.netlify.app" target="_blank" rel="noopener noreferrer">LXLog</a> family
               </p>
+              <p className="about-link" style={{ marginTop: '16px', fontSize: '11px', opacity: 0.7 }}>
+                Created with the help of Google Antigravity
+              </p>
             </div>
           </div>
         </div>
