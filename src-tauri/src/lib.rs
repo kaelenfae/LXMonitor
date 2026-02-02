@@ -4,9 +4,23 @@
 mod network;
 
 use network::{
-    create_source_manager, start_artnet_listener, start_sacn_listener, 
-    start_status_updater, DmxStore, DmxStoreHandle, ListenerEvent,
-    NetworkSource, SourceManagerHandle,
+    create_source_manager,
+    // Sniffer mode
+    is_npcap_available,
+    list_capture_interfaces,
+    start_artnet_listener,
+    start_sacn_listener,
+    start_sniffer_blocking,
+    start_status_updater,
+    CaptureInterface,
+    DmxStore,
+    DmxStoreHandle,
+    ListenerEvent,
+    NetworkSource,
+    SnifferState,
+    SnifferStateHandle,
+    SnifferStatus,
+    SourceManagerHandle,
 };
 
 use parking_lot::Mutex;
@@ -22,6 +36,7 @@ pub struct AppState {
     dmx_store: DmxStoreHandle,
     event_tx: broadcast::Sender<ListenerEvent>,
     is_listening: Mutex<bool>,
+    sniffer_state: SnifferStateHandle,
 }
 
 /// Get all discovered sources
@@ -32,13 +47,18 @@ async fn get_sources(state: State<'_, AppState>) -> Result<Vec<NetworkSource>, S
 
 /// Get DMX data for a specific universe
 #[tauri::command]
-async fn get_dmx_data(state: State<'_, AppState>, universe: u16) -> Result<Option<Vec<u8>>, String> {
+async fn get_dmx_data(
+    state: State<'_, AppState>,
+    universe: u16,
+) -> Result<Option<Vec<u8>>, String> {
     Ok(state.dmx_store.get(universe))
 }
 
 /// Get DMX data for all universes
 #[tauri::command]
-async fn get_all_dmx_data(state: State<'_, AppState>) -> Result<std::collections::HashMap<u16, Vec<u8>>, String> {
+async fn get_all_dmx_data(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<u16, Vec<u8>>, String> {
     Ok(state.dmx_store.get_all())
 }
 
@@ -54,14 +74,14 @@ pub struct NetworkInterface {
 #[tauri::command]
 async fn get_network_interfaces() -> Result<Vec<NetworkInterface>, String> {
     let mut interfaces = Vec::new();
-    
+
     // Add "all interfaces" option
     interfaces.push(NetworkInterface {
         name: "All Interfaces".to_string(),
         ip: "0.0.0.0".to_string(),
         is_loopback: false,
     });
-    
+
     // Get local interfaces
     if let Ok(local_ip) = local_ip_address::local_ip() {
         interfaces.push(NetworkInterface {
@@ -70,12 +90,14 @@ async fn get_network_interfaces() -> Result<Vec<NetworkInterface>, String> {
             is_loopback: false,
         });
     }
-    
+
     // Try to get all interfaces
     if let Ok(ifaces) = local_ip_address::list_afinet_netifas() {
         for (name, ip) in ifaces {
             if let std::net::IpAddr::V4(ipv4) = ip {
-                if ipv4 != Ipv4Addr::LOCALHOST && !interfaces.iter().any(|i| i.ip == ipv4.to_string()) {
+                if ipv4 != Ipv4Addr::LOCALHOST
+                    && !interfaces.iter().any(|i| i.ip == ipv4.to_string())
+                {
                     interfaces.push(NetworkInterface {
                         name,
                         ip: ipv4.to_string(),
@@ -85,7 +107,7 @@ async fn get_network_interfaces() -> Result<Vec<NetworkInterface>, String> {
             }
         }
     }
-    
+
     Ok(interfaces)
 }
 
@@ -108,11 +130,93 @@ async fn get_listener_status(state: State<'_, AppState>) -> Result<ListenerStatu
     })
 }
 
+// ============================================================================
+// Sniffer Mode Commands
+// ============================================================================
+
+/// Check if Npcap is available
+#[tauri::command]
+async fn check_npcap_available() -> Result<bool, String> {
+    Ok(is_npcap_available())
+}
+
+/// Get available capture interfaces
+#[tauri::command]
+async fn get_capture_interfaces() -> Result<Vec<CaptureInterface>, String> {
+    Ok(list_capture_interfaces())
+}
+
+/// Get sniffer status
+#[tauri::command]
+async fn get_sniffer_status(state: State<'_, AppState>) -> Result<SnifferStatus, String> {
+    Ok(state.sniffer_state.get_status())
+}
+
+/// Enable or disable sniffer mode
+#[tauri::command]
+async fn set_sniffer_mode(
+    state: State<'_, AppState>,
+    enabled: bool,
+    interface: Option<String>,
+) -> Result<(), String> {
+    if enabled {
+        // Check if Npcap is available
+        if !is_npcap_available() {
+            return Err(
+                "Npcap is not installed. Please install Npcap from https://npcap.com/".to_string(),
+            );
+        }
+
+        // Get interface name
+        let interface_name = match interface {
+            Some(name) => name,
+            None => {
+                // Use first available interface
+                let interfaces = list_capture_interfaces();
+                if interfaces.is_empty() {
+                    return Err("No capture interfaces available".to_string());
+                }
+                interfaces[0].name.clone()
+            }
+        };
+
+        // Check if already running
+        if *state.sniffer_state.enabled.lock() {
+            return Err("Sniffer is already running".to_string());
+        }
+
+        // Start sniffer in a background thread
+        *state.sniffer_state.enabled.lock() = true;
+        *state.sniffer_state.interface.lock() = Some(interface_name.clone());
+        *state.sniffer_state.stop_flag.lock() = false;
+        *state.sniffer_state.packets_captured.lock() = 0;
+
+        let sm = state.source_manager.clone();
+        let ds = state.dmx_store.clone();
+        let tx = state.event_tx.clone();
+        let ss = state.sniffer_state.clone();
+
+        std::thread::spawn(move || {
+            start_sniffer_blocking(&interface_name, sm, ds, tx, ss);
+        });
+
+        Ok(())
+    } else {
+        // Stop sniffer
+        *state.sniffer_state.stop_flag.lock() = true;
+        Ok(())
+    }
+}
+
 /// Start the network event forwarder to send events to the frontend
-fn start_event_forwarder(app_handle: AppHandle, mut event_rx: broadcast::Receiver<ListenerEvent>, state: AppState) {
+fn start_event_forwarder(
+    app_handle: AppHandle,
+    mut event_rx: broadcast::Receiver<ListenerEvent>,
+    state: AppState,
+) {
     let source_manager = state.source_manager.clone();
     let dmx_store = state.dmx_store.clone();
-    
+
     tauri::async_runtime::spawn(async move {
         loop {
             match event_rx.recv().await {
@@ -126,11 +230,14 @@ fn start_event_forwarder(app_handle: AppHandle, mut event_rx: broadcast::Receive
                             // Emit DMX data for the specific universe
                             let _ = app_handle.emit(&format!("dmx-{}", data.universe), &data.data);
                             // Also emit a general DMX update event
-                            let _ = app_handle.emit("dmx-updated", serde_json::json!({
-                                "universe": data.universe,
-                                "sourceIp": data.source_ip.to_string(),
-                                "timestamp": data.timestamp
-                            }));
+                            let _ = app_handle.emit(
+                                "dmx-updated",
+                                serde_json::json!({
+                                    "universe": data.universe,
+                                    "sourceIp": data.source_ip.to_string(),
+                                    "timestamp": data.timestamp
+                                }),
+                            );
                         }
                     }
                 }
@@ -146,9 +253,13 @@ fn start_event_forwarder(app_handle: AppHandle, mut event_rx: broadcast::Receive
 }
 
 /// Start the network listeners
-fn start_listeners(source_manager: SourceManagerHandle, dmx_store: DmxStoreHandle, event_tx: broadcast::Sender<ListenerEvent>) {
+fn start_listeners(
+    source_manager: SourceManagerHandle,
+    dmx_store: DmxStoreHandle,
+    event_tx: broadcast::Sender<ListenerEvent>,
+) {
     let bind_addr = Ipv4Addr::UNSPECIFIED;
-    
+
     // Start Art-Net listener
     let sm = source_manager.clone();
     let ds = dmx_store.clone();
@@ -158,7 +269,7 @@ fn start_listeners(source_manager: SourceManagerHandle, dmx_store: DmxStoreHandl
             eprintln!("[Art-Net] Listener error: {}", e);
         }
     });
-    
+
     // Start sACN listener
     let sm = source_manager.clone();
     let ds = dmx_store.clone();
@@ -168,7 +279,7 @@ fn start_listeners(source_manager: SourceManagerHandle, dmx_store: DmxStoreHandl
             eprintln!("[sACN] Listener error: {}", e);
         }
     });
-    
+
     // Start status updater
     let sm = source_manager.clone();
     let tx = event_tx.clone();
@@ -183,14 +294,18 @@ pub fn run() {
     let source_manager = create_source_manager();
     let dmx_store = Arc::new(DmxStore::new());
     let (event_tx, _) = broadcast::channel::<ListenerEvent>(1000);
-    
+
+    // Create sniffer state
+    let sniffer_state = Arc::new(SnifferState::new());
+
     let app_state = AppState {
         source_manager: source_manager.clone(),
         dmx_store: dmx_store.clone(),
         event_tx: event_tx.clone(),
         is_listening: Mutex::new(true),
+        sniffer_state: sniffer_state.clone(),
     };
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
@@ -200,27 +315,33 @@ pub fn run() {
             get_all_dmx_data,
             get_network_interfaces,
             get_listener_status,
+            // Sniffer commands
+            check_npcap_available,
+            get_capture_interfaces,
+            get_sniffer_status,
+            set_sniffer_mode,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let event_rx = event_tx.subscribe();
-            
+
             // Create state for event forwarder
             let forwarder_state = AppState {
                 source_manager: source_manager.clone(),
                 dmx_store: dmx_store.clone(),
                 event_tx: event_tx.clone(),
                 is_listening: Mutex::new(true),
+                sniffer_state: sniffer_state.clone(),
             };
-            
+
             // Start event forwarder
             start_event_forwarder(app_handle, event_rx, forwarder_state);
-            
+
             // Start network listeners
             start_listeners(source_manager, dmx_store, event_tx);
-            
+
             println!("LXMonitor started - listening for Art-Net and sACN traffic");
-            
+
             Ok(())
         })
         .run(tauri::generate_context!())

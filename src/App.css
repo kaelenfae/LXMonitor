@@ -243,8 +243,11 @@ html.colorblind {
   --accent-text: #000000;
 
   --success: #0077bb;
+  /* Blue */
   --warning: #ffaa00;
-  --error: #cc3311;
+  /* Yellow */
+  --error: #ee3377;
+  /* Magenta (instead of Red) */
 }
 
 /* Dyslexic Theme - OpenDyslexic Font with calm colors */
@@ -1421,5 +1424,82 @@ body {
 }
 
 .about-link a:hover {
+  text-decoration: underline;
+}
+
+/* ===== DEVICE TABS ===== */
+
+.devices-tabs {
+  display: flex;
+  padding: 8px;
+  gap: 4px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.devices-tab-btn {
+  flex: 1;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.devices-tab-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+}
+
+.devices-tab-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--accent-text);
+}
+
+/* ===== SNIFFER SETTINGS ===== */
+
+.sniffer-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sniffer-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+}
+
+.sniffer-warning .warning-icon {
+  font-size: 18px;
+}
+
+.sniffer-warning p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.sniffer-warning .description {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.sniffer-warning a {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+.sniffer-warning a:hover {
   text-decoration: underline;
 }

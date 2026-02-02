@@ -237,7 +237,15 @@ function SettingsModal({
   selectedInterface,
   onInterfaceChange,
   protocolFilter,
-  onProtocolChange
+  onProtocolChange,
+  // Sniffer props
+  snifferEnabled,
+  onSnifferToggle,
+  npcapAvailable,
+  captureInterfaces,
+  selectedCaptureInterface,
+  onCaptureInterfaceChange,
+  snifferStatus
 }) {
   if (!isOpen) return null;
 
@@ -332,6 +340,68 @@ function SettingsModal({
               </div>
               <p className="interface-note">
                 Filter which protocols to listen for. Use "Both" for full network monitoring.
+              </p>
+            </div>
+          </div>
+
+          {/* Sniffer Mode Section */}
+          <div className="settings-section">
+            <h3>Sniffer Mode (Advanced)</h3>
+            <div className="sniffer-settings">
+              {!npcapAvailable ? (
+                <div className="sniffer-warning">
+                  <span className="warning-icon">⚠️</span>
+                  <div>
+                    <p><strong>Npcap Not Installed</strong></p>
+                    <p className="description">Sniffer mode requires Npcap to be installed. <a href="https://npcap.com/" target="_blank" rel="noopener noreferrer">Download Npcap</a></p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="accessibility-toggle">
+                    <div>
+                      <label>Enable Sniffer Mode</label>
+                      <div className="description">Capture all network traffic (requires admin)</div>
+                    </div>
+                    <label className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={snifferEnabled}
+                        onChange={(e) => onSnifferToggle(e.target.checked)}
+                      />
+                      <span className="toggle-slider"></span>
+                    </label>
+                  </div>
+                  {snifferEnabled && (
+                    <div className="interface-selector" style={{ marginTop: '12px' }}>
+                      <label>Capture Interface</label>
+                      <select
+                        value={selectedCaptureInterface}
+                        onChange={(e) => onCaptureInterfaceChange(e.target.value)}
+                        className="interface-select"
+                      >
+                        {captureInterfaces.map((iface) => (
+                          <option key={iface.name} value={iface.name}>
+                            {iface.description || iface.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {snifferStatus?.packets_captured > 0 && (
+                    <p className="interface-note" style={{ marginTop: '8px' }}>
+                      Packets captured: {snifferStatus.packets_captured.toLocaleString()}
+                    </p>
+                  )}
+                  {snifferStatus?.error && (
+                    <p className="interface-note" style={{ color: 'var(--error)', marginTop: '8px' }}>
+                      Error: {snifferStatus.error}
+                    </p>
+                  )}
+                </>
+              )}
+              <p className="interface-note" style={{ marginTop: '12px' }}>
+                Sniffer mode allows seeing traffic to other IPs. Requires port mirroring on managed switches.
               </p>
             </div>
           </div>
@@ -555,7 +625,8 @@ function UniverseViewer({
   sources,
   channelHistory,
   trackedChannels,
-  onToggleChannel
+  onToggleChannel,
+  theme
 }) {
   const [hoveredChannel, setHoveredChannel] = useState(null);
   const [tooltipPos, setTooltipPos] = useState(null);
@@ -585,6 +656,13 @@ function UniverseViewer({
 
       case 'level':
         if (value > 0) {
+          // Check for CVD mode
+          if (theme === 'colorblind') {
+            // Use single color opacity/intensity instead of hue sweep
+            const alpha = 0.3 + (value / 255) * 0.7;
+            return `rgba(238, 119, 51, ${alpha})`; // Orange (#ee7733)
+          }
+
           const hue = 240 - (value / 255) * 240;
           return `hsl(${hue}, 80%, 50%)`;
         }
@@ -604,6 +682,10 @@ function UniverseViewer({
 
       case 'unused':
         if (value === 0) {
+          // Check for CVD mode
+          if (theme === 'colorblind') {
+            return `var(--error)`; // Use theme error color (Magenta)
+          }
           return 'rgba(239, 68, 68, 0.3)';
         }
         return 'var(--success)';
@@ -801,6 +883,16 @@ function App() {
   const [selectedInterface, setSelectedInterface] = useState('0.0.0.0');
   const [protocolFilter, setProtocolFilter] = useState('both');
 
+  // Sniffer mode state
+  const [snifferEnabled, setSnifferEnabled] = useState(false);
+  const [snifferStatus, setSnifferStatus] = useState(null);
+  const [captureInterfaces, setCaptureInterfaces] = useState([]);
+  const [selectedCaptureInterface, setSelectedCaptureInterface] = useState('');
+  const [npcapAvailable, setNpcapAvailable] = useState(false);
+
+  // Device tab state (all, sending, receiving)
+  const [deviceTab, setDeviceTab] = useState('all');
+
   // Get all universes from all sources
   const allUniverses = [...new Set(sources.flatMap(s => s.universes))].sort((a, b) => a - b);
 
@@ -838,6 +930,29 @@ function App() {
       }
     };
     fetchInterfaces();
+
+    // Fetch sniffer info
+    const fetchSnifferInfo = async () => {
+      try {
+        const available = await invoke('check_npcap_available');
+        setNpcapAvailable(available);
+
+        if (available) {
+          const interfaces = await invoke('get_capture_interfaces');
+          setCaptureInterfaces(interfaces);
+          if (interfaces.length > 0) {
+            setSelectedCaptureInterface(interfaces[0].name);
+          }
+        }
+
+        const status = await invoke('get_sniffer_status');
+        setSnifferStatus(status);
+        setSnifferEnabled(status.enabled);
+      } catch (err) {
+        console.error('Failed to fetch sniffer info:', err);
+      }
+    };
+    fetchSnifferInfo();
   }, []);
 
   // Save color mode
@@ -878,6 +993,45 @@ function App() {
     // Note: Would need backend support to actually filter listeners
     console.log('Protocol filter:', protocol);
   };
+
+  // Handle sniffer mode toggle
+  const handleSnifferToggle = async (enabled) => {
+    try {
+      await invoke('set_sniffer_mode', {
+        enabled,
+        interface: enabled ? selectedCaptureInterface : null
+      });
+      setSnifferEnabled(enabled);
+
+      // Refresh status after a short delay
+      setTimeout(async () => {
+        const status = await invoke('get_sniffer_status');
+        setSnifferStatus(status);
+      }, 500);
+    } catch (err) {
+      console.error('Failed to toggle sniffer mode:', err);
+      alert('Failed to toggle sniffer mode: ' + err);
+    }
+  };
+
+  // Handle capture interface change
+  const handleCaptureInterfaceChange = (interfaceName) => {
+    setSelectedCaptureInterface(interfaceName);
+    // If sniffer is running, restart with new interface
+    if (snifferEnabled) {
+      handleSnifferToggle(false).then(() => {
+        setTimeout(() => handleSnifferToggle(true), 100);
+      });
+    }
+  };
+
+  // Filter sources based on device tab
+  const filteredSources = sources.filter(source => {
+    if (deviceTab === 'all') return true;
+    if (deviceTab === 'sending') return source.direction === 'sending' || source.direction === 'both';
+    if (deviceTab === 'receiving') return source.direction === 'receiving' || source.direction === 'both';
+    return true;
+  });
 
   // Fetch sources from backend
   const fetchSources = useCallback(async () => {
@@ -1014,16 +1168,39 @@ function App() {
       {/* Sidebar - Source List */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h2>Discovered Sources</h2>
-          <span className="source-count">{sources.length}</span>
+          <h2>Devices</h2>
+          <span className="source-count">{filteredSources.length}</span>
         </div>
+
+        {/* Device Tabs */}
+        <div className="devices-tabs">
+          <button
+            className={`devices-tab-btn ${deviceTab === 'all' ? 'active' : ''}`}
+            onClick={() => setDeviceTab('all')}
+          >
+            All
+          </button>
+          <button
+            className={`devices-tab-btn ${deviceTab === 'sending' ? 'active' : ''}`}
+            onClick={() => setDeviceTab('sending')}
+          >
+            Sending
+          </button>
+          <button
+            className={`devices-tab-btn ${deviceTab === 'receiving' ? 'active' : ''}`}
+            onClick={() => setDeviceTab('receiving')}
+          >
+            Receiving
+          </button>
+        </div>
+
         <div className="source-list">
-          {sources.length === 0 ? (
+          {filteredSources.length === 0 ? (
             <div className="sidebar-empty">
-              <p>No sources detected yet...</p>
+              <p>{sources.length === 0 ? 'No devices detected yet...' : `No ${deviceTab} devices`}</p>
             </div>
           ) : (
-            sources.map((source) => (
+            filteredSources.map((source) => (
               <SourceCard
                 key={source.id}
                 source={source}
@@ -1052,6 +1229,7 @@ function App() {
             channelHistory={channelHistory}
             trackedChannels={trackedChannels}
             onToggleChannel={handleToggleChannel}
+            theme={theme}
           />
         ) : (
           <EmptyState isListening={isListening} />
@@ -1071,6 +1249,14 @@ function App() {
         onInterfaceChange={handleInterfaceChange}
         protocolFilter={protocolFilter}
         onProtocolChange={handleProtocolChange}
+        // Sniffer props
+        snifferEnabled={snifferEnabled}
+        onSnifferToggle={handleSnifferToggle}
+        npcapAvailable={npcapAvailable}
+        captureInterfaces={captureInterfaces}
+        selectedCaptureInterface={selectedCaptureInterface}
+        onCaptureInterfaceChange={handleCaptureInterfaceChange}
+        snifferStatus={snifferStatus}
       />
     </div>
   );

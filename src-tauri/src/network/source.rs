@@ -25,6 +25,16 @@ pub enum SourceStatus {
     Stale,    // No data for 10+ seconds
 }
 
+/// Source direction - whether the device is sending or receiving DMX
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceDirection {
+    Sending,   // Device is sending DMX data (controller/console)
+    Receiving, // Device is receiving DMX data (node/fixture)
+    Both,      // Device is both sending and receiving
+    Unknown,   // Direction not yet determined
+}
+
 /// Represents a discovered network source
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkSource {
@@ -35,6 +45,7 @@ pub struct NetworkSource {
     pub protocol: Protocol,
     pub universes: Vec<u16>,
     pub status: SourceStatus,
+    pub direction: SourceDirection,
     pub fps: f32,
     
     // Statistics
@@ -86,6 +97,7 @@ impl NetworkSource {
             protocol: Protocol::ArtNet,
             universes: Vec::new(),
             status: SourceStatus::Active,
+            direction: SourceDirection::Unknown,
             fps: 0.0,
             packet_count: 0,
             first_seen: now_ms,
@@ -121,6 +133,7 @@ impl NetworkSource {
             protocol: Protocol::Sacn,
             universes: Vec::new(),
             status: SourceStatus::Active,
+            direction: SourceDirection::Unknown,
             fps: 0.0,
             packet_count: 0,
             first_seen: now_ms,
@@ -274,6 +287,109 @@ impl SourceManager {
             .as_millis() as u64;
         entry.source.update_status(Instant::now(), entry.last_packet);
         entry.source.sacn_priority = Some(priority);
+        
+        // Add universe
+        if !entry.source.universes.contains(&universe) {
+            entry.source.universes.push(universe);
+            entry.source.universes.sort();
+        }
+    }
+    
+    /// Update or add an Art-Net source with direction info (for sniffer mode)
+    pub fn update_artnet_source_with_direction(
+        &self,
+        ip: IpAddr,
+        short_name: &str,
+        long_name: &str,
+        mac: Option<[u8; 6]>,
+        universes: Option<Vec<u16>>,
+        direction: SourceDirection,
+    ) {
+        let id = format!("artnet-{}", ip);
+        let mut sources = self.sources.write();
+        
+        let entry = sources.entry(id.clone()).or_insert_with(|| {
+            SourceEntry {
+                source: NetworkSource::from_artnet(ip, short_name, long_name, mac),
+                last_packet: Instant::now(),
+                fps_counter: FpsCounter::new(),
+            }
+        });
+        
+        entry.last_packet = Instant::now();
+        entry.fps_counter.record_packet();
+        entry.source.packet_count += 1;
+        entry.source.fps = entry.fps_counter.fps();
+        entry.source.last_seen = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        entry.source.update_status(Instant::now(), entry.last_packet);
+        
+        // Update direction - upgrade Unknown to specific, or to Both if conflicting
+        entry.source.direction = match (entry.source.direction, direction) {
+            (SourceDirection::Unknown, d) => d,
+            (SourceDirection::Sending, SourceDirection::Receiving) => SourceDirection::Both,
+            (SourceDirection::Receiving, SourceDirection::Sending) => SourceDirection::Both,
+            (current, _) => current,
+        };
+        
+        // Update universes if provided
+        if let Some(univs) = universes {
+            for u in univs {
+                if !entry.source.universes.contains(&u) {
+                    entry.source.universes.push(u);
+                    entry.source.universes.sort();
+                }
+            }
+        }
+    }
+    
+    /// Update or add an sACN source with direction info (for sniffer mode)
+    pub fn update_sacn_source_with_direction(
+        &self,
+        ip: IpAddr,
+        source_name: &str,
+        cid: &[u8; 16],
+        priority: u8,
+        universe: u16,
+        direction: SourceDirection,
+    ) {
+        // For receiving-only devices without a real CID, use IP-based ID
+        let id = if cid == &[0u8; 16] {
+            format!("sacn-recv-{}", ip)
+        } else {
+            let cid_string = crate::network::sacn::cid_to_string(cid);
+            format!("sacn-{}", cid_string)
+        };
+        let mut sources = self.sources.write();
+        
+        let entry = sources.entry(id.clone()).or_insert_with(|| {
+            SourceEntry {
+                source: NetworkSource::from_sacn(ip, source_name, cid, priority),
+                last_packet: Instant::now(),
+                fps_counter: FpsCounter::new(),
+            }
+        });
+        
+        entry.last_packet = Instant::now();
+        entry.fps_counter.record_packet();
+        entry.source.packet_count += 1;
+        entry.source.fps = entry.fps_counter.fps();
+        entry.source.last_seen = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        entry.source.update_status(Instant::now(), entry.last_packet);
+        entry.source.sacn_priority = Some(priority);
+        
+        // Update direction
+        entry.source.direction = match (entry.source.direction, direction) {
+            (SourceDirection::Unknown, d) => d,
+            (SourceDirection::Sending, SourceDirection::Receiving) => SourceDirection::Both,
+            (SourceDirection::Receiving, SourceDirection::Sending) => SourceDirection::Both,
+            (current, _) => current,
+        };
         
         // Add universe
         if !entry.source.universes.contains(&universe) {
