@@ -49,6 +49,11 @@ npm run tauri build
 
 - [LXLog](https://lxlog.netlify.app) — Lighting documentation and paperwork tool
 
+## Support
+
+If you find this tool useful, consider supporting the project:
+[![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=flat&logo=ko-fi&logoColor=white)](https://ko-fi.com/lxlog)
+
 ## Credits
 
 Created with the help of **Google Antigravity**.

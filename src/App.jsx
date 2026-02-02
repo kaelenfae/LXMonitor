@@ -426,6 +426,9 @@ function SettingsModal({
               <p className="about-link" style={{ marginTop: '16px', fontSize: '11px', opacity: 0.7 }}>
                 Created with the help of Google Antigravity
               </p>
+              <p className="about-link" style={{ marginTop: '12px' }}>
+                <a href="https://ko-fi.com/lxlog" target="_blank" rel="noopener noreferrer">Support on Ko-fi ☕</a>
+              </p>
             </div>
           </div>
         </div>
