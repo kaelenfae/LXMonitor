@@ -4,6 +4,7 @@
 mod network;
 
 use network::{
+    create_artpoll_packet,
     create_source_manager,
     // Sniffer mode
     is_npcap_available,
@@ -21,6 +22,7 @@ use network::{
     SnifferStateHandle,
     SnifferStatus,
     SourceManagerHandle,
+    ARTNET_PORT,
 };
 
 use parking_lot::Mutex;
@@ -208,6 +210,33 @@ async fn set_sniffer_mode(
     }
 }
 
+// ============================================================================
+// Network Discovery Commands
+// ============================================================================
+
+/// Send an ArtPoll packet to discover Art-Net devices
+#[tauri::command]
+async fn send_artnet_poll() -> Result<(), String> {
+    use std::net::UdpSocket;
+
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("Failed to create socket: {}", e))?;
+
+    socket
+        .set_broadcast(true)
+        .map_err(|e| format!("Failed to enable broadcast: {}", e))?;
+
+    let poll_packet = create_artpoll_packet();
+    let broadcast_addr = format!("255.255.255.255:{}", ARTNET_PORT);
+
+    socket
+        .send_to(&poll_packet, &broadcast_addr)
+        .map_err(|e| format!("Failed to send ArtPoll: {}", e))?;
+
+    println!("[Art-Net] Sent ArtPoll broadcast");
+    Ok(())
+}
+
 /// Start the network event forwarder to send events to the frontend
 fn start_event_forwarder(
     app_handle: AppHandle,
@@ -320,6 +349,8 @@ pub fn run() {
             get_capture_interfaces,
             get_sniffer_status,
             set_sniffer_mode,
+            // Discovery commands
+            send_artnet_poll,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

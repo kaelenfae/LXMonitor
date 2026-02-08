@@ -114,7 +114,7 @@ impl Default for ArtPollReply {
 pub struct ArtDmx {
     pub sequence: u8,
     pub physical: u8,
-    pub universe: u16,  // 15-bit universe (net:subnet:universe)
+    pub universe: u16, // 15-bit universe (net:subnet:universe)
     pub length: u16,
     pub data: Vec<u8>,
 }
@@ -134,16 +134,16 @@ pub fn parse_artnet_packet(data: &[u8], _source: SocketAddr) -> Option<ArtNetPac
     if data.len() < 12 {
         return None;
     }
-    
+
     // Check Art-Net header
     if &data[0..8] != ARTNET_HEADER {
         return None;
     }
-    
+
     // Get OpCode (little-endian)
     let opcode = u16::from_le_bytes([data[8], data[9]]);
     let opcode = ArtNetOpCode::from(opcode);
-    
+
     match opcode {
         ArtNetOpCode::OpPoll => Some(ArtNetPacket::Poll),
         ArtNetOpCode::OpPollReply => parse_poll_reply(data),
@@ -157,86 +157,86 @@ fn parse_poll_reply(data: &[u8]) -> Option<ArtNetPacket> {
     if data.len() < 207 {
         return None;
     }
-    
+
     let mut reply = ArtPollReply::default();
-    
+
     // IP Address (bytes 10-13)
     reply.ip_address.copy_from_slice(&data[10..14]);
-    
+
     // Port (bytes 14-15, little-endian)
     reply.port = u16::from_le_bytes([data[14], data[15]]);
-    
+
     // Version (bytes 16-17, high byte first)
     reply.version_info = u16::from_be_bytes([data[16], data[17]]);
-    
+
     // Net/Sub switch (bytes 18-19)
     reply.net_switch = data[18];
     reply.sub_switch = data[19];
-    
+
     // OEM (bytes 20-21)
     reply.oem = u16::from_be_bytes([data[20], data[21]]);
-    
+
     // UBEA version (byte 22)
     reply.ubea_version = data[22];
-    
+
     // Status1 (byte 23)
     reply.status1 = data[23];
-    
+
     // ESTA Manufacturer (bytes 24-25)
     reply.esta_manufacturer = u16::from_le_bytes([data[24], data[25]]);
-    
+
     // Short Name (bytes 26-43, 18 bytes, null terminated)
     reply.short_name = extract_string(&data[26..44]);
-    
+
     // Long Name (bytes 44-107, 64 bytes, null terminated)
     reply.long_name = extract_string(&data[44..108]);
-    
+
     // Node Report (bytes 108-171, 64 bytes)
     reply.node_report = extract_string(&data[108..172]);
-    
+
     // NumPorts (bytes 172-173)
     reply.num_ports = u16::from_be_bytes([data[172], data[173]]);
-    
+
     // Port Types (bytes 174-177)
     reply.port_types.copy_from_slice(&data[174..178]);
-    
+
     // Good Input (bytes 178-181)
     reply.good_input.copy_from_slice(&data[178..182]);
-    
+
     // Good Output (bytes 182-185)
     reply.good_output.copy_from_slice(&data[182..186]);
-    
+
     // SwIn (bytes 186-189)
     reply.sw_in.copy_from_slice(&data[186..190]);
-    
+
     // SwOut (bytes 190-193)
     reply.sw_out.copy_from_slice(&data[190..194]);
-    
+
     // Style (byte 200)
     if data.len() > 200 {
         reply.style = data[200];
     }
-    
+
     // MAC Address (bytes 201-206)
     if data.len() >= 207 {
         reply.mac_address.copy_from_slice(&data[201..207]);
     }
-    
+
     // Bind IP (bytes 207-210)
     if data.len() >= 211 {
         reply.bind_ip.copy_from_slice(&data[207..211]);
     }
-    
+
     // Bind Index (byte 211)
     if data.len() > 211 {
         reply.bind_index = data[211];
     }
-    
+
     // Status2 (byte 212)
     if data.len() > 212 {
         reply.status2 = data[212];
     }
-    
+
     Some(ArtNetPacket::PollReply(reply))
 }
 
@@ -245,32 +245,32 @@ fn parse_dmx(data: &[u8]) -> Option<ArtNetPacket> {
     if data.len() < 18 {
         return None;
     }
-    
+
     // Protocol version (bytes 10-11, should be 14)
     let _version = u16::from_be_bytes([data[10], data[11]]);
-    
+
     // Sequence (byte 12)
     let sequence = data[12];
-    
+
     // Physical port (byte 13)
     let physical = data[13];
-    
+
     // Universe (bytes 14-15, little-endian) - SubUni in low byte, Net in high byte
     let sub_uni = data[14];
     let net = data[15];
     let universe = ((net as u16) << 8) | (sub_uni as u16);
-    
+
     // Length (bytes 16-17, big-endian)
     let length = u16::from_be_bytes([data[16], data[17]]);
-    
+
     // DMX data starts at byte 18
     let dmx_end = 18 + (length as usize).min(512);
     if data.len() < dmx_end {
         return None;
     }
-    
+
     let dmx_data = data[18..dmx_end].to_vec();
-    
+
     Some(ArtNetPacket::Dmx(ArtDmx {
         sequence,
         physical,
@@ -289,4 +289,30 @@ fn extract_string(data: &[u8]) -> String {
 /// Calculate the full 15-bit Art-Net universe from net, subnet, and universe
 pub fn calculate_artnet_universe(net: u8, subnet: u8, universe: u8) -> u16 {
     ((net as u16 & 0x7F) << 8) | ((subnet as u16 & 0x0F) << 4) | (universe as u16 & 0x0F)
+}
+
+/// Create an ArtPoll packet for device discovery
+pub fn create_artpoll_packet() -> Vec<u8> {
+    let mut packet = Vec::with_capacity(14);
+
+    // Art-Net header
+    packet.extend_from_slice(ARTNET_HEADER);
+
+    // OpCode (little-endian) - OpPoll = 0x2000
+    packet.push(0x00);
+    packet.push(0x20);
+
+    // Protocol version (high byte first) - version 14
+    packet.push(0x00);
+    packet.push(0x0E);
+
+    // Flags
+    // Bit 1 = Send ArtPollReply when conditions change
+    // Bit 0 = Deprecated, set to 0
+    packet.push(0x02);
+
+    // DiagPriority - Low priority diagnostics
+    packet.push(0x10);
+
+    packet
 }

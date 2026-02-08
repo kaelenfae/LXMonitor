@@ -573,6 +573,63 @@ body {
   color: #06b6d4;
 }
 
+/* Source Card Warning Indicators */
+.source-card.has-warning {
+  border-color: var(--warning);
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.warning-icon {
+  margin-right: 4px;
+}
+
+.source-detail.warning {
+  background: rgba(251, 191, 36, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.fps-low {
+  color: var(--warning) !important;
+}
+
+.fps-high {
+  color: var(--error) !important;
+}
+
+.packet-loss-warning {
+  color: var(--error) !important;
+  font-weight: 600;
+}
+
+.duplicate-warning {
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+/* Sidebar Header Actions */
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discover-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: var(--transition-fast);
+}
+
+.discover-btn:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
 /* ===== MAIN CONTENT ===== */
 
 .content {
@@ -1018,8 +1075,8 @@ body {
 /* ===== CHANNEL TOOLTIP ===== */
 
 .channel-tooltip {
-  position: absolute;
-  z-index: 100;
+  position: fixed;
+  z-index: 2000;
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: 8px;

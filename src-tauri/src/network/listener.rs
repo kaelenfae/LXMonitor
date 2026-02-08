@@ -2,7 +2,7 @@
 
 use crate::network::artnet::{parse_artnet_packet, ArtNetPacket, ARTNET_PORT};
 use crate::network::sacn::{parse_sacn_packet, SacnPacket, SACN_PORT};
-use crate::network::source::SourceManagerHandle;
+use crate::network::source::{SourceDirection, SourceManagerHandle};
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -38,17 +38,17 @@ impl DmxStore {
             data: RwLock::new(HashMap::new()),
         }
     }
-    
+
     pub fn update(&self, universe: u16, data: Vec<u8>) {
         let mut store = self.data.write();
         store.insert(universe, data);
     }
-    
+
     pub fn get(&self, universe: u16) -> Option<Vec<u8>> {
         let store = self.data.read();
         store.get(&universe).cloned()
     }
-    
+
     pub fn get_all(&self) -> HashMap<u16, Vec<u8>> {
         self.data.read().clone()
     }
@@ -89,14 +89,14 @@ pub async fn start_artnet_listener(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::new(IpAddr::V4(bind_addr), ARTNET_PORT);
     let socket = UdpSocket::bind(addr).await?;
-    
+
     // Enable broadcast receiving
     socket.set_broadcast(true)?;
-    
+
     println!("[Art-Net] Listening on {}", addr);
-    
+
     let mut buf = vec![0u8; 1500];
-    
+
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, src)) => {
@@ -109,20 +109,21 @@ pub async fn start_artnet_listener(
                                 reply.ip_address[2],
                                 reply.ip_address[3],
                             ));
-                            
+
                             // Calculate universes from sw_out
                             let mut universes = Vec::new();
                             for i in 0..reply.num_ports.min(4) as usize {
-                                if reply.port_types[i] & 0x80 != 0 { // Output port
+                                if reply.port_types[i] & 0x80 != 0 {
+                                    // Output port
                                     let uni = crate::network::artnet::calculate_artnet_universe(
                                         reply.net_switch,
                                         reply.sub_switch,
-                                        reply.sw_out[i]
+                                        reply.sw_out[i],
                                     );
                                     universes.push(uni);
                                 }
                             }
-                            
+
                             source_manager.update_artnet_source(
                                 ip,
                                 &reply.short_name,
@@ -130,23 +131,24 @@ pub async fn start_artnet_listener(
                                 Some(reply.mac_address),
                                 Some(universes),
                             );
-                            
+
                             let _ = event_tx.send(ListenerEvent::SourcesUpdated);
                         }
                         ArtNetPacket::Dmx(dmx) => {
-                            // Get source IP and update as Art-Net source
+                            // Get source IP and update as Art-Net source (sending DMX)
                             let ip = src.ip();
-                            source_manager.update_artnet_source(
+                            source_manager.update_artnet_source_with_direction(
                                 ip,
                                 "",
                                 "",
                                 None,
                                 Some(vec![dmx.universe]),
+                                SourceDirection::Sending,
                             );
-                            
+
                             // Store DMX data
                             dmx_store.update(dmx.universe, dmx.data.clone());
-                            
+
                             let _ = event_tx.send(ListenerEvent::DmxData(DmxData {
                                 universe: dmx.universe,
                                 data: dmx.data,
@@ -181,21 +183,21 @@ pub async fn start_sacn_listener(
     bind_addr: Ipv4Addr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::new(IpAddr::V4(bind_addr), SACN_PORT);
-    
+
     // Create socket with socket2 for multicast support
     let socket = socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::DGRAM,
         Some(socket2::Protocol::UDP),
     )?;
-    
+
     socket.set_reuse_address(true)?;
     #[cfg(not(windows))]
     socket.set_reuse_port(true)?;
-    
+
     socket.bind(&addr.into())?;
     socket.set_nonblocking(true)?;
-    
+
     // Join multicast groups for universes 1-63999
     // For efficiency, we join a few common universes initially
     let multicast_interface = bind_addr;
@@ -208,31 +210,32 @@ pub async fn start_sacn_listener(
             }
         }
     }
-    
+
     let socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(socket)?;
-    
+
     println!("[sACN] Listening on {} (multicast)", addr);
-    
+
     let mut buf = vec![0u8; 1500];
-    
+
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, src)) => {
                 if let Some(packet) = parse_sacn_packet(&buf[..len], src) {
                     match packet {
                         SacnPacket::Dmx(dmx) => {
-                            source_manager.update_sacn_source(
+                            source_manager.update_sacn_source_with_direction(
                                 src.ip(),
                                 &dmx.source.source_name,
                                 &dmx.source.cid,
                                 dmx.source.priority,
                                 dmx.source.universe,
+                                SourceDirection::Sending,
                             );
-                            
+
                             // Store DMX data
                             dmx_store.update(dmx.source.universe, dmx.data.clone());
-                            
+
                             let _ = event_tx.send(ListenerEvent::DmxData(DmxData {
                                 universe: dmx.source.universe,
                                 data: dmx.data,
@@ -278,7 +281,7 @@ pub async fn start_status_updater(
     event_tx: broadcast::Sender<ListenerEvent>,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    
+
     loop {
         interval.tick().await;
         source_manager.update_statuses();

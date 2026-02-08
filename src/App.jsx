@@ -517,14 +517,18 @@ function SourceCard({ source, isActive, onClick }) {
     }
   };
 
+  const hasDuplicates = source.duplicate_universes && source.duplicate_universes.length > 0;
+  const hasWarning = source.fps_warning || hasDuplicates || (source.packet_loss_percent > 5);
+
   return (
     <div
-      className={`source-card ${isActive ? 'active' : ''}`}
+      className={`source-card ${isActive ? 'active' : ''} ${hasWarning ? 'has-warning' : ''}`}
       onClick={onClick}
     >
       <div className="source-card-header">
         <span className="source-name">{source.name || 'Unknown Source'}</span>
         <div className="source-status">
+          {hasWarning && <span className="warning-icon" title="Warning">⚠️</span>}
           <span className={`status-dot ${getStatusClass(source.status)}`}></span>
           <span>{source.status}</span>
         </div>
@@ -550,7 +554,33 @@ function SourceCard({ source, isActive, onClick }) {
         {source.fps > 0 && (
           <div className="source-detail">
             <span className="label">Rate</span>
-            <span className="value">{Math.round(source.fps)} fps</span>
+            <span className={`value ${source.fps_warning ? `fps-${source.fps_warning}` : ''}`}>
+              {Math.round(source.fps)} fps
+              {source.fps_warning === 'low' && ' ⬇'}
+              {source.fps_warning === 'high' && ' ⬆'}
+            </span>
+          </div>
+        )}
+        {source.packet_loss_percent > 0 && (
+          <div className="source-detail">
+            <span className="label">Packet Loss</span>
+            <span className={`value ${source.packet_loss_percent > 5 ? 'packet-loss-warning' : ''}`}>
+              {source.packet_loss_percent.toFixed(1)}%
+            </span>
+          </div>
+        )}
+        {source.latency_jitter_ms > 0 && (
+          <div className="source-detail">
+            <span className="label">Jitter</span>
+            <span className="value">{source.latency_jitter_ms.toFixed(1)} ms</span>
+          </div>
+        )}
+        {hasDuplicates && (
+          <div className="source-detail warning">
+            <span className="label">⚠️ Duplicates</span>
+            <span className="value duplicate-warning">
+              Universe{source.duplicate_universes.length > 1 ? 's' : ''}: {source.duplicate_universes.join(', ')}
+            </span>
           </div>
         )}
         {source.mac_address && (
@@ -697,12 +727,11 @@ function UniverseViewer({
 
   const handleMouseEnter = (e, channel) => {
     const rect = e.target.getBoundingClientRect();
-    const gridRect = gridRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
 
     setHoveredChannel(channel);
     setTooltipPos({
-      x: rect.left - gridRect.left + rect.width / 2,
-      y: rect.top - gridRect.top - 10
+      x: rect.left + rect.width / 2,
+      y: rect.top - 10
     });
   };
 
@@ -1169,7 +1198,16 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <h2>Devices</h2>
-          <span className="source-count">{filteredSources.length}</span>
+          <div className="sidebar-header-actions">
+            <button
+              className="discover-btn"
+              onClick={() => invoke('send_artnet_poll').catch(console.error)}
+              title="Discover Art-Net devices"
+            >
+              🔍
+            </button>
+            <span className="source-count">{filteredSources.length}</span>
+          </div>
         </div>
 
         {/* Device Tabs */}
