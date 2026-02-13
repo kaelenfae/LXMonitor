@@ -185,6 +185,7 @@ pub async fn start_sacn_listener(
     bind_addr: Ipv4Addr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::new(IpAddr::V4(bind_addr), SACN_PORT);
+    let discovery_addr = Ipv4Addr::new(239, 255, 0, 0);
 
     // Create socket with socket2 for multicast support
     let socket = socket2::Socket::new(
@@ -200,18 +201,28 @@ pub async fn start_sacn_listener(
     socket.bind(&addr.into())?;
     socket.set_nonblocking(true)?;
 
-    // Join multicast groups for universes 1-63999
-    // For efficiency, we join a few common universes initially
+    // Join discovery multicast group
     let multicast_interface = bind_addr;
+    match socket.join_multicast_v4(&discovery_addr, &multicast_interface) {
+        Ok(_) => println!(
+            "[sACN] Joined universe discovery group ({})",
+            discovery_addr
+        ),
+        Err(e) => eprintln!("[sACN] Failed to join discovery group: {}", e),
+    }
+
+    // Join multicast groups for universes 1-512 initially
+    let mut joined_universes = std::collections::HashSet::new();
     let mut joined_count = 0;
     let mut failed_count = 0;
 
-    for universe in 1..=100 {
+    for universe in 1..=512 {
         let multicast_addr = crate::network::sacn::sacn_multicast_address(universe);
         match socket.join_multicast_v4(&multicast_addr, &multicast_interface) {
             Ok(_) => {
                 joined_count += 1;
-                if universe <= 20 {
+                joined_universes.insert(universe);
+                if universe <= 10 {
                     println!(
                         "[sACN] Joined multicast group for universe {} ({})",
                         universe, multicast_addr
@@ -220,7 +231,7 @@ pub async fn start_sacn_listener(
             }
             Err(e) => {
                 failed_count += 1;
-                if universe <= 20 {
+                if universe <= 10 {
                     eprintln!(
                         "[sACN] Failed to join multicast for universe {}: {}",
                         universe, e
@@ -231,7 +242,7 @@ pub async fn start_sacn_listener(
     }
 
     println!(
-        "[sACN] Multicast groups: {} joined, {} failed",
+        "[sACN] Initial multicast groups: {} joined, {} failed (1-512)",
         joined_count, failed_count
     );
 
@@ -288,14 +299,36 @@ pub async fn start_sacn_listener(
                         SacnPacket::Discovery(discovery) => {
                             // Update source with discovered universes
                             for universe in &discovery.universes {
+                                let universe = *universe;
                                 source_manager.update_sacn_source(
                                     src.ip(),
                                     &discovery.source_name,
                                     &discovery.cid,
                                     100, // Default priority for discovery
-                                    *universe,
+                                    universe,
                                     None, // No sequence number for Discovery
                                 );
+
+                                // Dynamically join discovered universe if not already joined
+                                if !joined_universes.contains(&universe) && universe > 0 {
+                                    let multicast_addr =
+                                        crate::network::sacn::sacn_multicast_address(universe);
+                                    match socket.join_multicast_v4(multicast_addr, bind_addr) {
+                                        Ok(_) => {
+                                            println!(
+                                                "[sACN] Dynamically joined universe {} ({})",
+                                                universe, multicast_addr
+                                            );
+                                            joined_universes.insert(universe);
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[sACN] Failed to dynamically join universe {}: {}",
+                                                universe, e
+                                            );
+                                        }
+                                    }
+                                }
                             }
                             let _ = event_tx.send(ListenerEvent::SourcesUpdated);
                         }

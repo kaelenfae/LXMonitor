@@ -29,7 +29,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::broadcast;
 
 /// Application state
@@ -237,6 +237,15 @@ async fn send_artnet_poll() -> Result<(), String> {
     Ok(())
 }
 
+/// Helper to send ArtPoll from anywhere
+pub fn trigger_artnet_poll() {
+    tokio::spawn(async move {
+        if let Err(e) = send_artnet_poll().await {
+            eprintln!("[Art-Net] Auto-poll error: {}", e);
+        }
+    });
+}
+
 /// Start the network event forwarder to send events to the frontend
 fn start_event_forwarder(
     app_handle: AppHandle,
@@ -244,7 +253,6 @@ fn start_event_forwarder(
     state: AppState,
 ) {
     let source_manager = state.source_manager.clone();
-    let dmx_store = state.dmx_store.clone();
 
     tauri::async_runtime::spawn(async move {
         loop {
@@ -314,6 +322,17 @@ fn start_listeners(
     let tx = event_tx.clone();
     tauri::async_runtime::spawn(async move {
         start_status_updater(sm, tx).await;
+    });
+
+    // Start auto-poll task (every 10 seconds)
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            if let Err(e) = send_artnet_poll().await {
+                eprintln!("[Art-Net] Periodical ArtPoll error: {}", e);
+            }
+        }
     });
 }
 
