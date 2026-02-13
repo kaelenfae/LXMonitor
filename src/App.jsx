@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 // Available themes (matching LXLog)
@@ -30,6 +31,17 @@ const COLOR_MODES = [
 const VIEW_MODES = [
   { id: 'grid', name: 'Grid', icon: '⊞' },
   { id: 'graph', name: 'Graph', icon: '📈' },
+  { id: 'heatmap', name: 'Heatmap', icon: '🔥' },
+];
+
+// Heatmap color gradient (cool to hot)
+const HEATMAP_COLORS = [
+  { threshold: 0, color: 'rgba(99, 102, 241, 0.3)' },    // Blue (cold - no activity)
+  { threshold: 0.2, color: 'rgba(6, 182, 212, 0.5)' },   // Cyan
+  { threshold: 0.4, color: 'rgba(16, 185, 129, 0.6)' },  // Green
+  { threshold: 0.6, color: 'rgba(245, 158, 11, 0.7)' },  // Orange
+  { threshold: 0.8, color: 'rgba(239, 68, 68, 0.85)' },  // Red (hot - high activity)
+  { threshold: 1.0, color: 'rgba(255, 255, 255, 0.95)' }, // White (max activity)
 ];
 
 // Graph colors for multiple channels
@@ -43,6 +55,103 @@ const SOURCE_COLORS = [
   '#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
   '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16',
 ];
+
+// Mini Universe Card Component for Dashboard
+function MiniUniverseCard({ universe, data, sources, onClick, isSelected }) {
+  const activeChannels = data ? data.filter(v => v > 0).length : 0;
+  const maxValue = data ? Math.max(...data, 0) : 0;
+  const universeSource = sources.find(s => s.universes.includes(universe));
+
+  // Create a 16x8 mini-grid representation (128 cells, each representing 4 channels)
+  const miniGrid = [];
+  for (let i = 0; i < 128; i++) {
+    const startChannel = i * 4;
+    // Average of 4 channels
+    const avg = data ? (
+      (data[startChannel] || 0) +
+      (data[startChannel + 1] || 0) +
+      (data[startChannel + 2] || 0) +
+      (data[startChannel + 3] || 0)
+    ) / 4 : 0;
+    miniGrid.push(avg);
+  }
+
+  return (
+    <div
+      className={`mini-universe-card ${isSelected ? 'selected' : ''}`}
+      onClick={() => onClick(universe)}
+    >
+      <div className="mini-universe-header">
+        <span className="mini-universe-title">Universe {universe}</span>
+        <span className="mini-universe-stats">{activeChannels} active</span>
+      </div>
+      <div className="mini-universe-grid">
+        {miniGrid.map((value, idx) => (
+          <div
+            key={idx}
+            className="mini-cell"
+            style={{
+              opacity: value > 0 ? 0.3 + (value / 255) * 0.7 : 0.1,
+              background: value > 0 ? 'var(--accent-primary)' : 'var(--bg-hover)'
+            }}
+          />
+        ))}
+      </div>
+      {universeSource && (
+        <div className="mini-universe-source">
+          <span className={`source-protocol ${universeSource.protocol?.toLowerCase()}`}>
+            {universeSource.protocol}
+          </span>
+          <span className="source-name">{universeSource.name || universeSource.ip}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Universe Dashboard Component - Multi-universe overview
+function UniverseDashboard({
+  allUniverses,
+  dmxData,
+  sources,
+  selectedUniverse,
+  onSelectUniverse,
+  onExitDashboard
+}) {
+  if (allUniverses.length === 0) {
+    return (
+      <div className="dashboard-empty">
+        <p>No universes detected yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="universe-dashboard">
+      <div className="dashboard-header">
+        <h2>Multi-Universe Dashboard</h2>
+        <div className="dashboard-stats">
+          <span>{allUniverses.length} Universe{allUniverses.length !== 1 ? 's' : ''}</span>
+          <button className="action-button" onClick={onExitDashboard}>
+            ← Back to Single View
+          </button>
+        </div>
+      </div>
+      <div className="dashboard-grid">
+        {allUniverses.map(universe => (
+          <MiniUniverseCard
+            key={universe}
+            universe={universe}
+            data={dmxData[universe]}
+            sources={sources}
+            onClick={onSelectUniverse}
+            isSelected={selectedUniverse === universe}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Channel Graph Component
 function ChannelGraph({ universe, channelData, trackedChannels, onRemoveChannel, timeWindow = 30 }) {
@@ -245,9 +354,109 @@ function SettingsModal({
   captureInterfaces,
   selectedCaptureInterface,
   onCaptureInterfaceChange,
-  snifferStatus
+  snifferStatus,
+  // Export props
+  dmxData,
+  sources,
+  selectedUniverse,
+  allUniverses
 }) {
   if (!isOpen) return null;
+
+  // Export DMX snapshot to CSV
+  const exportDMXSnapshot = () => {
+    if (!selectedUniverse || !dmxData[selectedUniverse]) {
+      alert('No DMX data to export. Please select a universe with data.');
+      return;
+    }
+
+    const data = dmxData[selectedUniverse];
+    const rows = [];
+
+    // Header row
+    rows.push('Channel,Value');
+
+    // Data rows
+    data.forEach((value, index) => {
+      rows.push(`${index + 1},${value}`);
+    });
+
+    const csv = rows.join('\n');
+    downloadCSV(csv, `dmx_universe_${selectedUniverse}_${getTimestamp()}.csv`);
+  };
+
+  // Export all universes snapshot
+  const exportAllUniverses = () => {
+    if (Object.keys(dmxData).length === 0) {
+      alert('No DMX data to export.');
+      return;
+    }
+
+    const rows = [];
+    const universes = Object.keys(dmxData).sort((a, b) => Number(a) - Number(b));
+
+    // Header row: Channel, Universe1, Universe2, ...
+    rows.push(['Channel', ...universes.map(u => `Universe ${u}`)].join(','));
+
+    // Data rows (512 channels)
+    for (let ch = 0; ch < 512; ch++) {
+      const row = [ch + 1];
+      universes.forEach(u => {
+        row.push(dmxData[u]?.[ch] || 0);
+      });
+      rows.push(row.join(','));
+    }
+
+    const csv = rows.join('\n');
+    downloadCSV(csv, `dmx_all_universes_${getTimestamp()}.csv`);
+  };
+
+  // Export source list to CSV
+  const exportSourceList = () => {
+    if (!sources || sources.length === 0) {
+      alert('No sources to export.');
+      return;
+    }
+
+    const rows = [];
+
+    // Header row
+    rows.push('Name,IP,Protocol,Status,FPS,Packet Count,Universes,Packet Loss %,Jitter (ms)');
+
+    // Data rows
+    sources.forEach(source => {
+      rows.push([
+        `"${source.name || 'Unknown'}"`,
+        source.ip,
+        source.protocol,
+        source.status,
+        source.fps?.toFixed(1) || 0,
+        source.packet_count || 0,
+        `"${source.universes?.join(', ') || ''}"`,
+        source.packet_loss_percent?.toFixed(2) || 0,
+        source.latency_jitter_ms?.toFixed(2) || 0
+      ].join(','));
+    });
+
+    const csv = rows.join('\n');
+    downloadCSV(csv, `sources_${getTimestamp()}.csv`);
+  };
+
+  // Helper to download CSV
+  const downloadCSV = (content, filename) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  // Helper to get timestamp
+  const getTimestamp = () => {
+    const now = new Date();
+    return now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  };
 
   const handleThemeChange = (themeId) => {
     THEMES.forEach(t => {
@@ -338,8 +547,18 @@ function SettingsModal({
                   <span className="protocol-label">sACN</span>
                 </label>
               </div>
+
+              <button
+                className="action-button"
+                style={{ marginTop: '12px', width: '100%' }}
+                onClick={() => invoke('send_artnet_poll')}
+              >
+                Send Art-Net Poll
+              </button>
+
               <p className="interface-note">
                 Filter which protocols to listen for. Use "Both" for full network monitoring.
+                Sending an Art-Poll requests all Art-Net nodes to reply.
               </p>
             </div>
           </div>
@@ -353,7 +572,7 @@ function SettingsModal({
                   <span className="warning-icon">⚠️</span>
                   <div>
                     <p><strong>Npcap Not Installed</strong></p>
-                    <p className="description">Sniffer mode requires Npcap to be installed. <a href="https://npcap.com/" target="_blank" rel="noopener noreferrer">Download Npcap</a></p>
+                    <p className="description">Sniffer mode requires Npcap to be installed. <button onClick={() => openUrl('https://npcap.com/')} style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', padding: 0, font: 'inherit' }}>Download Npcap</button></p>
                   </div>
                 </div>
               ) : (
@@ -484,20 +703,94 @@ function SettingsModal({
             </div>
           </div>
 
-          {/* About Section */}
+          {/* Export Section */}
+          <div className="settings-section">
+            <h3>Export Data</h3>
+            <div className="export-options">
+              <button
+                className="action-button export-btn"
+                onClick={exportDMXSnapshot}
+                disabled={!selectedUniverse || !dmxData[selectedUniverse]}
+              >
+                📊 Export Universe {selectedUniverse || '?'} DMX
+              </button>
+              <button
+                className="action-button export-btn"
+                onClick={exportAllUniverses}
+                disabled={Object.keys(dmxData).length === 0}
+              >
+                📋 Export All Universes
+              </button>
+              <button
+                className="action-button export-btn"
+                onClick={exportSourceList}
+                disabled={!sources || sources.length === 0}
+              >
+                📡 Export Source List
+              </button>
+              <p className="interface-note">
+                Export current DMX data and source information as CSV files.
+              </p>
+            </div>
+          </div>
+
+          {/* About & Documentation Section */}
           <div className="settings-section">
             <h3>About</h3>
             <div className="about-info">
               <p><strong>LXMonitor</strong> v0.1.0</p>
               <p className="description">Universal Art-Net / sACN Network Monitor</p>
-              <p className="about-link">
-                Part of the <a href="https://lxlog.netlify.app" target="_blank" rel="noopener noreferrer">LXLog</a> family
-              </p>
-              <p className="about-link" style={{ marginTop: '16px', fontSize: '11px', opacity: 0.7 }}>
+
+              <div className="about-features" style={{ marginTop: '16px' }}>
+                <p style={{ fontSize: '12px', fontWeight: '600', marginBottom: '8px', color: 'var(--text-secondary)' }}>Features</p>
+                <ul style={{ fontSize: '12px', color: 'var(--text-tertiary)', paddingLeft: '16px', lineHeight: '1.8' }}>
+                  <li>Art-Net 4 & sACN (E1.31) support</li>
+                  <li>Real-time 512-channel DMX monitoring</li>
+                  <li>Automatic source discovery</li>
+                  <li>Network diagnostics (FPS, jitter, packet loss)</li>
+                  <li>Duplicate universe detection</li>
+                  <li>Channel history graphing</li>
+                  <li>Sniffer mode (requires Npcap)</li>
+                </ul>
+              </div>
+
+              <div className="about-diagnostics" style={{ marginTop: '16px' }}>
+                <p style={{ fontSize: '12px', fontWeight: '600', marginBottom: '8px', color: 'var(--text-secondary)' }}>Diagnostics Reference</p>
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', lineHeight: '1.8' }}>
+                  <p><span style={{ color: 'var(--warning)' }}>●</span> <strong>Low FPS</strong> – Source sending below 20 fps</p>
+                  <p><span style={{ color: 'var(--error)' }}>●</span> <strong>High FPS</strong> – Source exceeding 44 fps (E1.11)</p>
+                  <p><span style={{ color: 'var(--error)' }}>●</span> <strong>Packet Loss</strong> – Sequence gaps detected (&gt;5% triggers warning)</p>
+                  <p><span style={{ color: 'var(--accent-primary)' }}>●</span> <strong>Jitter</strong> – Variance in packet arrival timing (ms)</p>
+                  <p><span style={{ color: 'var(--warning)' }}>●</span> <strong>Duplicates</strong> – Multiple sources on same universe</p>
+                </div>
+              </div>
+
+              <div className="about-links" style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  className="link-button"
+                  onClick={() => openUrl('https://github.com/kaelenfae/LXMonitor')}
+                  style={{ fontSize: '12px', background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                >
+                  GitHub Repository
+                </button>
+                <button
+                  className="link-button"
+                  onClick={() => openUrl('https://lxlog.netlify.app')}
+                  style={{ fontSize: '12px', background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                >
+                  LXLog Family
+                </button>
+                <button
+                  className="link-button"
+                  onClick={() => openUrl('https://ko-fi.com/lxlog')}
+                  style={{ fontSize: '12px', background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                >
+                  Support on Ko-fi ☕
+                </button>
+              </div>
+
+              <p style={{ marginTop: '16px', fontSize: '11px', opacity: 0.7 }}>
                 Created with the help of Google Antigravity
-              </p>
-              <p className="about-link" style={{ marginTop: '12px' }}>
-                <a href="https://ko-fi.com/lxlog" target="_blank" rel="noopener noreferrer">Support on Ko-fi ☕</a>
               </p>
             </div>
           </div>
@@ -654,6 +947,7 @@ function UniverseViewer({
   onViewModeChange,
   sources,
   channelHistory,
+  channelActivity,
   trackedChannels,
   onToggleChannel,
   theme
@@ -661,6 +955,17 @@ function UniverseViewer({
   const [hoveredChannel, setHoveredChannel] = useState(null);
   const [tooltipPos, setTooltipPos] = useState(null);
   const gridRef = useRef(null);
+
+  // Get heatmap color based on activity level (0-1)
+  const getHeatmapColor = (activityLevel) => {
+    const colors = HEATMAP_COLORS;
+    for (let i = colors.length - 1; i >= 0; i--) {
+      if (activityLevel >= colors[i].threshold) {
+        return colors[i].color;
+      }
+    }
+    return colors[0].color;
+  };
 
   const channels = Array.from({ length: 512 }, (_, i) => ({
     number: i + 1,
@@ -727,12 +1032,20 @@ function UniverseViewer({
 
   const handleMouseEnter = (e, channel) => {
     const rect = e.target.getBoundingClientRect();
+    const tooltipWidth = 180; // min-width from CSS
+    const tooltipHeight = 150; // approximate height
+
+    // Calculate initial position
+    let x = rect.left + rect.width / 2;
+    let y = rect.top - 10;
+
+    // Clamp to viewport bounds
+    const padding = 10;
+    x = Math.max(tooltipWidth / 2 + padding, Math.min(x, window.innerWidth - tooltipWidth / 2 - padding));
+    y = Math.max(tooltipHeight + padding, y);
 
     setHoveredChannel(channel);
-    setTooltipPos({
-      x: rect.left + rect.width / 2,
-      y: rect.top - 10
-    });
+    setTooltipPos({ x, y });
   };
 
   const handleMouseLeave = () => {
@@ -872,6 +1185,48 @@ function UniverseViewer({
           onRemoveChannel={(ch) => onToggleChannel(ch)}
         />
       )}
+
+      {/* Heatmap View */}
+      {viewMode === 'heatmap' && (
+        <div className="heatmap-container">
+          <div className="heatmap-legend">
+            <span className="legend-label">Cold</span>
+            <div className="legend-gradient"></div>
+            <span className="legend-label">Hot</span>
+          </div>
+          <div className="channel-grid heatmap-grid" ref={gridRef}>
+            {channels.map((channel) => {
+              const activity = channelActivity?.[channel.number] || 0;
+              const heatColor = getHeatmapColor(activity);
+              return (
+                <div
+                  key={channel.number}
+                  className={`channel-cell heatmap-cell ${channel.value > 0 ? 'has-value' : ''}`}
+                  onMouseEnter={(e) => handleMouseEnter(e, channel)}
+                  onMouseLeave={handleMouseLeave}
+                  onClick={() => handleChannelClick(channel)}
+                  style={{ '--heatmap-color': heatColor }}
+                >
+                  <div
+                    className="channel-value"
+                    style={{ background: heatColor }}
+                  >
+                    {channel.value > 0 ? channel.value : channel.number}
+                  </div>
+                </div>
+              );
+            })}
+            {hoveredChannel && (
+              <ChannelTooltip
+                channel={hoveredChannel.number}
+                value={hoveredChannel.value}
+                source={universeSource}
+                position={tooltipPos}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -907,6 +1262,8 @@ function App() {
   const [colorMode, setColorMode] = useState('level');
   const [viewMode, setViewMode] = useState('grid');
   const [channelHistory, setChannelHistory] = useState({});
+  const [channelActivity, setChannelActivity] = useState({}); // Heatmap activity tracking
+  const prevDmxDataRef = useRef({}); // For tracking value changes
   const [trackedChannels, setTrackedChannels] = useState([]);
   const [networkInterfaces, setNetworkInterfaces] = useState([{ name: 'All Interfaces', ip: '0.0.0.0' }]);
   const [selectedInterface, setSelectedInterface] = useState('0.0.0.0');
@@ -921,6 +1278,9 @@ function App() {
 
   // Device tab state (all, sending, receiving)
   const [deviceTab, setDeviceTab] = useState('all');
+
+  // Dashboard view state
+  const [showDashboard, setShowDashboard] = useState(false);
 
   // Get all universes from all sources
   const allUniverses = [...new Set(sources.flatMap(s => s.universes))].sort((a, b) => a - b);
@@ -1104,6 +1464,22 @@ function App() {
           });
           return updated;
         });
+
+        // Update channel activity for heatmap (track changes over time)
+        setChannelActivity(prev => {
+          const updated = { ...prev };
+          const prevData = dmxData[universe] || [];
+          result.forEach((value, index) => {
+            const channel = index + 1;
+            const prevValue = prevData[index] || 0;
+            const change = Math.abs(value - prevValue) / 255;
+
+            // Decay existing activity and add new change
+            const currentActivity = updated[channel] || 0;
+            updated[channel] = Math.min(1, currentActivity * 0.95 + change * 0.5);
+          });
+          return updated;
+        });
       }
     } catch (err) {
       console.error('Failed to fetch DMX data:', err);
@@ -1133,6 +1509,29 @@ function App() {
           });
           return updated;
         });
+
+        // Update channel activity for heatmap (track value changes)
+        const prevData = prevDmxDataRef.current[universe] || [];
+        setChannelActivity(prev => {
+          const updated = { ...prev };
+          result.forEach((value, index) => {
+            const channelNum = index + 1;
+            const prevValue = prevData[index] || 0;
+            const currentActivity = updated[channelNum] || 0;
+
+            // Decay existing activity over time
+            const decayedActivity = currentActivity * 0.95;
+
+            // Add activity boost if value changed
+            if (value !== prevValue) {
+              updated[channelNum] = Math.min(1, decayedActivity + 0.15);
+            } else {
+              updated[channelNum] = decayedActivity;
+            }
+          });
+          return updated;
+        });
+        prevDmxDataRef.current[universe] = result;
       }
 
       setUniverseStats(prev => ({
@@ -1177,7 +1576,7 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div className="app" onContextMenu={(e) => e.preventDefault()}>
       {/* Header */}
       <header className="header">
         <div className="header-title">
@@ -1188,6 +1587,15 @@ function App() {
           </span>
         </div>
         <div className="header-controls">
+          {allUniverses.length > 1 && (
+            <button
+              className={`settings-btn ${showDashboard ? 'active' : ''}`}
+              onClick={() => setShowDashboard(!showDashboard)}
+              title="Toggle multi-universe dashboard"
+            >
+              {showDashboard ? '⊞ Single' : '⊟ Dashboard'}
+            </button>
+          )}
           <button className="settings-btn" onClick={() => setShowSettings(true)}>
             ⚙️ Settings
           </button>
@@ -1252,7 +1660,19 @@ function App() {
 
       {/* Main Content */}
       <main className="content">
-        {allUniverses.length > 0 && selectedUniverse ? (
+        {showDashboard && allUniverses.length > 0 ? (
+          <UniverseDashboard
+            allUniverses={allUniverses}
+            dmxData={dmxData}
+            sources={sources}
+            selectedUniverse={selectedUniverse}
+            onSelectUniverse={(universe) => {
+              setSelectedUniverse(universe);
+              setShowDashboard(false);
+            }}
+            onExitDashboard={() => setShowDashboard(false)}
+          />
+        ) : allUniverses.length > 0 && selectedUniverse ? (
           <UniverseViewer
             universe={selectedUniverse}
             data={dmxData[selectedUniverse]}
@@ -1265,6 +1685,7 @@ function App() {
             onViewModeChange={handleViewModeChange}
             sources={sources}
             channelHistory={channelHistory}
+            channelActivity={channelActivity}
             trackedChannels={trackedChannels}
             onToggleChannel={handleToggleChannel}
             theme={theme}
@@ -1295,6 +1716,11 @@ function App() {
         selectedCaptureInterface={selectedCaptureInterface}
         onCaptureInterfaceChange={handleCaptureInterfaceChange}
         snifferStatus={snifferStatus}
+        // Export props
+        dmxData={dmxData}
+        sources={sources}
+        selectedUniverse={selectedUniverse}
+        allUniverses={allUniverses}
       />
     </div>
   );

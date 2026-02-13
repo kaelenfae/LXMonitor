@@ -208,6 +208,7 @@ pub fn start_sniffer_blocking(
                                         None,
                                         Some(vec![dmx.universe]),
                                         SourceDirection::Sending,
+                                        Some(dmx.sequence),
                                     );
 
                                     // Destination is receiving (if not broadcast)
@@ -221,6 +222,7 @@ pub fn start_sniffer_blocking(
                                             None,
                                             Some(vec![dmx.universe]),
                                             SourceDirection::Receiving,
+                                            None, // No sequence available/relevant for destination inference
                                         );
                                     }
 
@@ -266,6 +268,7 @@ pub fn start_sniffer_blocking(
                                         Some(reply.mac_address),
                                         Some(universes),
                                         SourceDirection::Receiving,
+                                        None, // No sequence for PollReply
                                     );
 
                                     let _ = event_tx.send(ListenerEvent::SourcesUpdated);
@@ -285,6 +288,7 @@ pub fn start_sniffer_blocking(
                                         dmx.source.priority,
                                         dmx.source.universe,
                                         SourceDirection::Sending,
+                                        Some(dmx.source.sequence),
                                     );
 
                                     // For unicast sACN, mark destination as receiving
@@ -296,6 +300,7 @@ pub fn start_sniffer_blocking(
                                             0,
                                             dmx.source.universe,
                                             SourceDirection::Receiving,
+                                            None, // No sequence for destination inference
                                         );
                                     }
 

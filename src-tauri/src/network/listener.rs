@@ -130,6 +130,7 @@ pub async fn start_artnet_listener(
                                 &reply.long_name,
                                 Some(reply.mac_address),
                                 Some(universes),
+                                None, // No sequence number for PollReply
                             );
 
                             let _ = event_tx.send(ListenerEvent::SourcesUpdated);
@@ -144,6 +145,7 @@ pub async fn start_artnet_listener(
                                 None,
                                 Some(vec![dmx.universe]),
                                 SourceDirection::Sending,
+                                Some(dmx.sequence),
                             );
 
                             // Store DMX data
@@ -201,15 +203,37 @@ pub async fn start_sacn_listener(
     // Join multicast groups for universes 1-63999
     // For efficiency, we join a few common universes initially
     let multicast_interface = bind_addr;
+    let mut joined_count = 0;
+    let mut failed_count = 0;
+
     for universe in 1..=100 {
         let multicast_addr = crate::network::sacn::sacn_multicast_address(universe);
-        if let Err(e) = socket.join_multicast_v4(&multicast_addr, &multicast_interface) {
-            // Not all systems support joining this many groups
-            if universe == 1 {
-                eprintln!("[sACN] Warning: Could not join multicast group: {}", e);
+        match socket.join_multicast_v4(&multicast_addr, &multicast_interface) {
+            Ok(_) => {
+                joined_count += 1;
+                if universe <= 20 {
+                    println!(
+                        "[sACN] Joined multicast group for universe {} ({})",
+                        universe, multicast_addr
+                    );
+                }
+            }
+            Err(e) => {
+                failed_count += 1;
+                if universe <= 20 {
+                    eprintln!(
+                        "[sACN] Failed to join multicast for universe {}: {}",
+                        universe, e
+                    );
+                }
             }
         }
     }
+
+    println!(
+        "[sACN] Multicast groups: {} joined, {} failed",
+        joined_count, failed_count
+    );
 
     let socket: std::net::UdpSocket = socket.into();
     let socket = UdpSocket::from_std(socket)?;
@@ -221,6 +245,20 @@ pub async fn start_sacn_listener(
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, src)) => {
+                // Debug: Log raw packet info before parsing
+                // Universe is at bytes 113-114 in the packet
+                if len >= 115 {
+                    let raw_universe = u16::from_be_bytes([buf[113], buf[114]]);
+                    let raw_start_code = if len > 125 { buf[125] } else { 255 };
+                    println!(
+                        "[sACN RAW] Packet from {} - universe: {}, start_code: {}, len: {}",
+                        src.ip(),
+                        raw_universe,
+                        raw_start_code,
+                        len
+                    );
+                }
+
                 if let Some(packet) = parse_sacn_packet(&buf[..len], src) {
                     match packet {
                         SacnPacket::Dmx(dmx) => {
@@ -231,6 +269,7 @@ pub async fn start_sacn_listener(
                                 dmx.source.priority,
                                 dmx.source.universe,
                                 SourceDirection::Sending,
+                                Some(dmx.source.sequence),
                             );
 
                             // Store DMX data
@@ -255,6 +294,7 @@ pub async fn start_sacn_listener(
                                     &discovery.cid,
                                     100, // Default priority for discovery
                                     *universe,
+                                    None, // No sequence number for Discovery
                                 );
                             }
                             let _ = event_tx.send(ListenerEvent::SourcesUpdated);

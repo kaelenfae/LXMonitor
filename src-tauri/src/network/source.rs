@@ -392,6 +392,7 @@ impl SourceManager {
         long_name: &str,
         mac: Option<[u8; 6]>,
         universes: Option<Vec<u16>>,
+        sequence: Option<u8>,
     ) {
         let id = format!("artnet-{}", ip);
         let mut sources = self.sources.write();
@@ -406,6 +407,15 @@ impl SourceManager {
 
         entry.last_packet = Instant::now();
         entry.fps_counter.record_packet();
+
+        // Track sequence number for packet loss
+        if let Some(seq) = sequence {
+            entry.source.packet_loss_percent = entry.sequence_tracker.record_packet(seq);
+        }
+
+        // Track jitter
+        entry.source.latency_jitter_ms = entry.latency_tracker.record_packet();
+
         entry.source.packet_count += 1;
         entry.source.fps = entry.fps_counter.fps();
         entry.source.last_seen = std::time::SystemTime::now()
@@ -435,6 +445,7 @@ impl SourceManager {
         cid: &[u8; 16],
         priority: u8,
         universe: u16,
+        sequence: Option<u8>,
     ) {
         let cid_string = crate::network::sacn::cid_to_string(cid);
         let id = format!("sacn-{}", cid_string);
@@ -450,6 +461,15 @@ impl SourceManager {
 
         entry.last_packet = Instant::now();
         entry.fps_counter.record_packet();
+
+        // Track sequence number for packet loss
+        if let Some(seq) = sequence {
+            entry.source.packet_loss_percent = entry.sequence_tracker.record_packet(seq);
+        }
+
+        // Track jitter
+        entry.source.latency_jitter_ms = entry.latency_tracker.record_packet();
+
         entry.source.packet_count += 1;
         entry.source.fps = entry.fps_counter.fps();
         entry.source.last_seen = std::time::SystemTime::now()
@@ -477,6 +497,7 @@ impl SourceManager {
         mac: Option<[u8; 6]>,
         universes: Option<Vec<u16>>,
         direction: SourceDirection,
+        sequence: Option<u8>,
     ) {
         let id = format!("artnet-{}", ip);
         let mut sources = self.sources.write();
@@ -491,6 +512,15 @@ impl SourceManager {
 
         entry.last_packet = Instant::now();
         entry.fps_counter.record_packet();
+
+        // Track sequence number for packet loss
+        if let Some(seq) = sequence {
+            entry.source.packet_loss_percent = entry.sequence_tracker.record_packet(seq);
+        }
+
+        // Track jitter
+        entry.source.latency_jitter_ms = entry.latency_tracker.record_packet();
+
         entry.source.packet_count += 1;
         entry.source.fps = entry.fps_counter.fps();
         entry.source.last_seen = std::time::SystemTime::now()
@@ -529,6 +559,7 @@ impl SourceManager {
         priority: u8,
         universe: u16,
         direction: SourceDirection,
+        sequence: Option<u8>,
     ) {
         // For receiving-only devices without a real CID, use IP-based ID
         let id = if cid == &[0u8; 16] {
@@ -549,6 +580,15 @@ impl SourceManager {
 
         entry.last_packet = Instant::now();
         entry.fps_counter.record_packet();
+
+        // Track sequence number for packet loss
+        if let Some(seq) = sequence {
+            entry.source.packet_loss_percent = entry.sequence_tracker.record_packet(seq);
+        }
+
+        // Track jitter
+        entry.source.latency_jitter_ms = entry.latency_tracker.record_packet();
+
         entry.source.packet_count += 1;
         entry.source.fps = entry.fps_counter.fps();
         entry.source.last_seen = std::time::SystemTime::now()
