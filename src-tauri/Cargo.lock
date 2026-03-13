@@ -802,18 +802,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dns-lookup"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5597a4b7fe5275fc9dcf88ce26326bc8e4cb87d0130f33752d4c5f717793cf"
-dependencies = [
- "cfg-if",
- "libc",
- "socket2 0.6.2",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2016,7 +2004,6 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 name = "lxmonitor"
 version = "0.1.0"
 dependencies = [
- "dns-lookup",
  "local-ip-address",
  "parking_lot",
  "pcap",

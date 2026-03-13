@@ -1,6 +1,6 @@
 [package]
 name = "lxmonitor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Universal ArtNet/sACN Monitor"
 authors = ["you"]
 edition = "2021"
@@ -26,7 +26,6 @@ serde_json = "1"
 # Networking
 tokio = { version = "1", features = ["net", "sync", "rt-multi-thread", "macros", "time"] }
 socket2 = { version = "0.5", features = ["all"] }
-dns-lookup = "2"
 local-ip-address = "0.6"
 parking_lot = "0.12"
 

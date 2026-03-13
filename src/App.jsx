@@ -738,7 +738,7 @@ function SettingsModal({
           <div className="settings-section">
             <h3>About</h3>
             <div className="about-info">
-              <p><strong>LXMonitor</strong> v0.1.0</p>
+              <p><strong>LXMonitor</strong> v0.1.1</p>
               <p className="description">Universal Art-Net / sACN Network Monitor</p>
 
               <div className="about-features" style={{ marginTop: '16px' }}>
@@ -1263,8 +1263,8 @@ function App() {
   const [viewMode, setViewMode] = useState('grid');
   const [channelHistory, setChannelHistory] = useState({});
   const [channelActivity, setChannelActivity] = useState({}); // Heatmap activity tracking
-  const prevDmxDataRef = useRef({}); // For tracking value changes
   const [trackedChannels, setTrackedChannels] = useState([]);
+  const selectedSourceRef = useRef(null);
   const [networkInterfaces, setNetworkInterfaces] = useState([{ name: 'All Interfaces', ip: '0.0.0.0' }]);
   const [selectedInterface, setSelectedInterface] = useState('0.0.0.0');
   const [protocolFilter, setProtocolFilter] = useState('both');
@@ -1428,65 +1428,45 @@ function App() {
       const result = await invoke('get_sources');
       setSources(result);
 
-      if (result.length > 0 && !selectedSource) {
-        setSelectedSource(result[0]);
-        if (result[0].universes.length > 0) {
-          setSelectedUniverse(result[0].universes[0]);
+      // Use ref to avoid dependency on selectedSource
+      const currentSource = selectedSourceRef.current;
+
+      if (result.length > 0 && !currentSource) {
+        const first = result[0];
+        setSelectedSource(first);
+        selectedSourceRef.current = first;
+        if (first.universes.length > 0) {
+          setSelectedUniverse(first.universes[0]);
         }
       }
 
-      if (selectedSource) {
-        const updated = result.find(s => s.id === selectedSource.id);
+      if (currentSource) {
+        const updated = result.find(s => s.id === currentSource.id);
         if (updated) {
           setSelectedSource(updated);
+          selectedSourceRef.current = updated;
         }
       }
     } catch (err) {
       console.error('Failed to fetch sources:', err);
     }
-  }, [selectedSource]);
+  }, []);
 
-  // Fetch DMX data for selected universe
+  // Fetch DMX data for selected universe (initial load only, no channel tracking
+  // since the event-driven dmx-updated handler handles ongoing updates)
   const fetchDmxData = useCallback(async (universe) => {
     try {
       const result = await invoke('get_dmx_data', { universe });
       if (result) {
         setDmxData(prev => ({ ...prev, [universe]: result }));
-
-        // Update channel history for last-used mode
-        const now = Date.now();
-        setChannelHistory(prev => {
-          const updated = { ...prev };
-          result.forEach((value, index) => {
-            if (value > 0) {
-              updated[index + 1] = { lastActive: now, lastValue: value };
-            }
-          });
-          return updated;
-        });
-
-        // Update channel activity for heatmap (track changes over time)
-        setChannelActivity(prev => {
-          const updated = { ...prev };
-          const prevData = dmxData[universe] || [];
-          result.forEach((value, index) => {
-            const channel = index + 1;
-            const prevValue = prevData[index] || 0;
-            const change = Math.abs(value - prevValue) / 255;
-
-            // Decay existing activity and add new change
-            const currentActivity = updated[channel] || 0;
-            updated[channel] = Math.min(1, currentActivity * 0.95 + change * 0.5);
-          });
-          return updated;
-        });
       }
     } catch (err) {
       console.error('Failed to fetch DMX data:', err);
     }
   }, []);
 
-  // Set up event listeners
+  // Set up event listeners (runs once — fetchSources is now stable)
+  const prevDmxDataRef = useRef({}); // Track previous DMX values for heatmap
   useEffect(() => {
     const unlistenSources = listen('sources-updated', (event) => {
       setSources(event.payload);
@@ -1562,6 +1542,7 @@ function App() {
   // Handle source selection
   const handleSourceSelect = (source) => {
     setSelectedSource(source);
+    selectedSourceRef.current = source;
     if (source.universes.length > 0) {
       setSelectedUniverse(source.universes[0]);
     }

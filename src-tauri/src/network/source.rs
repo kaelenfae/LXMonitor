@@ -2,7 +2,7 @@
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -212,13 +212,8 @@ impl FpsCounter {
     }
 
     pub fn fps(&self) -> f32 {
-        let now = Instant::now();
-        let count = self
-            .packet_times
-            .iter()
-            .filter(|&&t| now.duration_since(t) < self.window_size)
-            .count();
-        count as f32
+        // record_packet() already prunes old entries, so length == count in window
+        self.packet_times.len() as f32
     }
 }
 
@@ -296,7 +291,7 @@ impl Default for SequenceTracker {
 #[derive(Debug, Clone)]
 pub struct LatencyTracker {
     last_packet_time: Option<Instant>,
-    intervals: Vec<Duration>,
+    intervals: VecDeque<Duration>,
     window_size: usize,
 }
 
@@ -304,7 +299,7 @@ impl LatencyTracker {
     pub fn new() -> Self {
         Self {
             last_packet_time: None,
-            intervals: Vec::new(),
+            intervals: VecDeque::new(),
             window_size: 100, // Track last 100 intervals
         }
     }
@@ -315,11 +310,11 @@ impl LatencyTracker {
 
         if let Some(last) = self.last_packet_time {
             let interval = now.duration_since(last);
-            self.intervals.push(interval);
+            self.intervals.push_back(interval);
 
-            // Keep only recent intervals
+            // Keep only recent intervals (O(1) removal from front)
             if self.intervals.len() > self.window_size {
-                self.intervals.remove(0);
+                self.intervals.pop_front();
             }
         }
 

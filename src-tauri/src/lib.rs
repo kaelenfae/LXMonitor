@@ -237,22 +237,14 @@ async fn send_artnet_poll() -> Result<(), String> {
     Ok(())
 }
 
-/// Helper to send ArtPoll from anywhere
-pub fn trigger_artnet_poll() {
-    tokio::spawn(async move {
-        if let Err(e) = send_artnet_poll().await {
-            eprintln!("[Art-Net] Auto-poll error: {}", e);
-        }
-    });
-}
+
 
 /// Start the network event forwarder to send events to the frontend
 fn start_event_forwarder(
     app_handle: AppHandle,
     mut event_rx: broadcast::Receiver<ListenerEvent>,
-    state: AppState,
+    source_manager: SourceManagerHandle,
 ) {
-    let source_manager = state.source_manager.clone();
 
     tauri::async_runtime::spawn(async move {
         loop {
@@ -375,17 +367,8 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let event_rx = event_tx.subscribe();
 
-            // Create state for event forwarder
-            let forwarder_state = AppState {
-                source_manager: source_manager.clone(),
-                dmx_store: dmx_store.clone(),
-                event_tx: event_tx.clone(),
-                is_listening: Mutex::new(true),
-                sniffer_state: sniffer_state.clone(),
-            };
-
             // Start event forwarder
-            start_event_forwarder(app_handle, event_rx, forwarder_state);
+            start_event_forwarder(app_handle, event_rx, source_manager.clone());
 
             // Start network listeners
             start_listeners(source_manager, dmx_store, event_tx);

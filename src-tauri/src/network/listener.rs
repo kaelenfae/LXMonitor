@@ -256,19 +256,6 @@ pub async fn start_sacn_listener(
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, src)) => {
-                // Debug: Log raw packet info before parsing
-                // Universe is at bytes 113-114 in the packet
-                if len >= 115 {
-                    let raw_universe = u16::from_be_bytes([buf[113], buf[114]]);
-                    let raw_start_code = if len > 125 { buf[125] } else { 255 };
-                    println!(
-                        "[sACN RAW] Packet from {} - universe: {}, start_code: {}, len: {}",
-                        src.ip(),
-                        raw_universe,
-                        raw_start_code,
-                        len
-                    );
-                }
 
                 if let Some(packet) = parse_sacn_packet(&buf[..len], src) {
                     match packet {
