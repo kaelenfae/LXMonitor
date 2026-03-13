@@ -4,15 +4,30 @@ Universal Art-Net / sACN Network Monitor for Windows and macOS.
 
 ![LXMonitor Screenshot](docs/screenshot.png)
 
+## Download
+
+**[⬇️ Download Latest Release](https://github.com/kaelenfae/LXMonitor/releases/latest)**
+
+| Platform | File |
+|----------|------|
+| macOS (Apple Silicon) | `LXMonitor_x.x.x_aarch64.dmg` |
+| macOS (Intel) | `LXMonitor_x.x.x_x64.dmg` |
+| Windows | `LXMonitor_x.x.x_x64-setup.exe` or `.msi` |
+
+> **macOS users:** You may need to right-click → Open on first launch, as the app is not signed with an Apple Developer certificate.
+
 ## Features
 
 - **Source Discovery** — Automatically detects Art-Net and sACN sources on the network
 - **Live DMX Viewing** — 512-channel grid with real-time value updates
-- **Multiple Universes** — Switch between all detected universes
+- **Multiple Universes** — Switch between all detected universes with a multi-universe dashboard
 - **Channel Graphs** — Track channel values over time
+- **Heatmap View** — Visualize channel activity as a heat map
 - **4 Color Modes** — Level, Source, Last Used, Unused
+- **Network Diagnostics** — FPS, jitter, packet loss, duplicate universe detection
 - **11 Themes** — Dark, Light, Midnight, Forest, and more
 - **Accessibility** — Dyslexic font, reduced motion, high contrast, large text
+- **Data Export** — Export DMX snapshots and source lists as CSV
 
 ## Tech Stack
 

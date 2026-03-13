@@ -3,8 +3,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - 'main'
   workflow_dispatch:
 
 jobs:
@@ -14,7 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-13, ubuntu-22.04, windows-latest]
+        include:
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+          - platform: windows-latest
+            args: ''
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -27,25 +31,33 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Those targets are usually used on macOS, Linux and Windows.
-          # If you want to modify them, please refer to https://github.com/dtolnay/rust-toolchain
           targets: ${{ contains(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.0-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libpcap-dev
 
       - name: install frontend dependencies
         run: npm install
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
-          releaseName: "App v__VERSION__"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
+          tagName: v__VERSION__
+          releaseName: 'LXMonitor v__VERSION__'
+          releaseBody: |
+            ## LXMonitor v__VERSION__
+
+            ### Downloads
+            - **macOS (Apple Silicon)** — `.dmg` file (aarch64)
+            - **macOS (Intel)** — `.dmg` file (x86_64)
+            - **Windows** — `.msi` installer or `.exe`
+
+            ### Changes in v0.1.1
+            - Fixed event listener stability (listeners no longer re-register on source selection)
+            - Fixed sACN performance (removed debug logging from hot path)
+            - Fixed heatmap accuracy (stale closure in DMX data comparison)
+            - Improved latency tracking performance (O(1) interval pruning)
+            - Removed unused dependencies and dead code
+
+            See [CHANGELOG.md](https://github.com/kaelenfae/LXMonitor/blob/master/CHANGELOG.md) for full details.
+          releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}
